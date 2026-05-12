@@ -7,6 +7,9 @@ router.post('/register', authController.register);
 router.post('/login', authController.login);
 router.post('/logout', verifyToken, authController.logout);
 router.get('/me', verifyToken, authController.me);
+router.post('/change-password', verifyToken, authController.changePassword);
+router.post('/resend-verification', authController.resendVerification);
+router.post('/verify-email', authController.verifyEmail);
 router.post('/forgot-password', authController.requestPasswordReset);
 router.post('/reset-password', authController.resetPassword);
 

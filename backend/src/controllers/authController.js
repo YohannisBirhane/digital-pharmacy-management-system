@@ -8,6 +8,7 @@ const env = process.env;
 const JWT_SECRET = env.JWT_SECRET || 'change_this_secret';
 const JWT_EXPIRES_IN = env.JWT_EXPIRES_IN || '7d';
 const RESET_EXPIRES_MIN = Number(env.RESET_TOKEN_EXPIRES_MIN || 60);
+const VERIFICATION_EXPIRES_MIN = Number(env.VERIFICATION_TOKEN_EXPIRES_MIN || 1440);
 
 const DATA_FILE = path.join(__dirname, '..', 'data', 'users.json');
 
@@ -35,11 +36,26 @@ exports.register = async (req, res) => {
   if (findByEmail(email)) return res.status(400).json({ message: 'Email already exists' });
   const hashed = await bcrypt.hash(password, 10);
   const users = loadUsers();
-  const user = { id: uuidv4(), name, email, password: hashed, role: role || 'customer', createdAt: new Date().toISOString() };
+  const verificationToken = uuidv4();
+  const user = {
+    id: uuidv4(),
+    name,
+    email,
+    password: hashed,
+    role: role || 'customer',
+    emailVerified: false,
+    verificationToken,
+    verificationExpires: Date.now() + VERIFICATION_EXPIRES_MIN * 60 * 1000,
+    createdAt: new Date().toISOString(),
+  };
   users.push(user);
   saveUsers(users);
   const token = jwt.sign({ sub: user.id, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
-  res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role }, token });
+  console.log(`Verify email link: http://localhost:${env.PORT || 5000}/auth/verify-email?token=${verificationToken}`);
+  res.json({
+    user: { id: user.id, name: user.name, email: user.email, role: user.role, emailVerified: user.emailVerified },
+    token,
+  });
 };
 
 exports.login = async (req, res) => {
@@ -50,14 +66,17 @@ exports.login = async (req, res) => {
   const ok = await bcrypt.compare(password, user.password);
   if (!ok) return res.status(401).json({ message: 'Invalid credentials' });
   const token = jwt.sign({ sub: user.id, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
-  res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role }, token });
+  res.json({
+    user: { id: user.id, name: user.name, email: user.email, role: user.role, emailVerified: !!user.emailVerified },
+    token,
+  });
 };
 
 exports.me = (req, res) => {
   const users = loadUsers();
   const user = users.find((u) => u.id === req.user.id);
   if (!user) return res.status(404).json({ message: 'User not found' });
-  res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role } });
+  res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, emailVerified: !!user.emailVerified } });
 };
 
 exports.logout = (req, res) => {
@@ -90,5 +109,46 @@ exports.resetPassword = async (req, res) => {
   delete user.resetToken;
   delete user.resetExpires;
   saveUsers(users);
+  res.json({ ok: true });
+};
+
+exports.changePassword = async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) return res.status(400).json({ message: 'Missing currentPassword or newPassword' });
+  const users = loadUsers();
+  const user = users.find((u) => u.id === req.user.id);
+  if (!user) return res.status(404).json({ message: 'User not found' });
+  const ok = await bcrypt.compare(currentPassword, user.password);
+  if (!ok) return res.status(401).json({ message: 'Invalid current password' });
+  user.password = await bcrypt.hash(newPassword, 10);
+  saveUsers(users);
+  res.json({ ok: true });
+};
+
+exports.verifyEmail = (req, res) => {
+  const token = req.body.token || req.query.token;
+  if (!token) return res.status(400).json({ message: 'Missing token' });
+  const users = loadUsers();
+  const user = users.find((u) => u.verificationToken === token && u.verificationExpires && u.verificationExpires > Date.now());
+  if (!user) return res.status(400).json({ message: 'Invalid or expired token' });
+  user.emailVerified = true;
+  delete user.verificationToken;
+  delete user.verificationExpires;
+  saveUsers(users);
+  res.json({ ok: true });
+};
+
+exports.resendVerification = (req, res) => {
+  const email = req.body.email || req.user?.email;
+  if (!email) return res.status(400).json({ message: 'Missing email' });
+  const users = loadUsers();
+  const user = users.find((u) => u.email === email);
+  if (!user) return res.json({ ok: true });
+  if (user.emailVerified) return res.json({ ok: true });
+  const token = uuidv4();
+  user.verificationToken = token;
+  user.verificationExpires = Date.now() + VERIFICATION_EXPIRES_MIN * 60 * 1000;
+  saveUsers(users);
+  console.log(`Verify email link: http://localhost:${env.PORT || 5000}/auth/verify-email?token=${token}`);
   res.json({ ok: true });
 };
