@@ -19,9 +19,6 @@ router.delete('/users/:userId', verifyToken, isAdmin, adminController.deleteUser
 // Pharmacists Management
 router.get('/pharmacists', verifyToken, isAdmin, adminController.getPharmacists);
 
-// Delivery Staff Management
-router.get('/delivery-staff', verifyToken, isAdmin, adminController.getDeliveryStaff);
-
 // Branch Management
 router.get('/branches', verifyToken, isAdmin, adminController.getBranches);
 router.post('/branches', verifyToken, isAdmin, adminController.createBranch);

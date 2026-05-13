@@ -15,14 +15,18 @@ enum Role {
   ADMIN
   CUSTOMER
   PHARMACIST
-  DELIVERY
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum OrderStatus {
   PENDING
   PROCESSING
   SHIPPED
-  OUT_FOR_DELIVERY
   DELIVERED
   CANCELLED
   RETURNED
@@ -53,19 +57,24 @@ enum PaymentMethod {
 // -----------------------------------------------------------------------------
 
 model User {
-  id        String   @id @default(uuid())
-  name      String
-  email     String   @unique
-  password  String
-  phone     String?
-  role      Role     @default(CUSTOMER)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                String             @id @default(uuid())
+  name              String
+  email             String             @unique
+  password          String
+  phone             String?
+  role              Role               @default(CUSTOMER)
+  pharmacyName      String?
+  pharmacyLocation   String?
+  licenseNumber     String?            @unique
+  nationalId        String?            @unique
+  verificationStatus VerificationStatus @default(PENDING)
+  verifiedAt        DateTime?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
 
   // Relationships
   orders        Order[]        @relation("CustomerOrders")
   prescriptions Prescription[]
-  deliveries    Delivery[]     @relation("DeliveryAgent")
   auditLogs     AuditLog[]
   payments      Payment[]
 }
@@ -146,7 +155,6 @@ model Order {
   prescription Prescription? @relation(fields: [prescriptionId], references: [id])
   items        OrderItem[]
   payment      Payment?
-  delivery     Delivery?
 }
 
 model OrderItem {
@@ -175,20 +183,6 @@ model Payment {
   // Relationships
   order    Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
   customer User  @relation(fields: [customerId], references: [id])
-}
-
-model Delivery {
-  id              String      @id @default(uuid())
-  orderId         String      @unique
-  deliveryAgentId String?
-  trackingUrl     String?
-  status          OrderStatus @default(PENDING)
-  assignedAt      DateTime?
-  deliveredAt     DateTime?
-
-  // Relationships
-  order         Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  deliveryAgent User? @relation("DeliveryAgent", fields: [deliveryAgentId], references: [id])
 }
 
 model AuditLog {

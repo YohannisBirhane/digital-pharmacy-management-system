@@ -3,80 +3,98 @@ const path = require('path');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
+const prisma = require('../config/prisma');
 
 const env = process.env;
 const JWT_SECRET = env.JWT_SECRET || 'change_this_secret';
 const JWT_EXPIRES_IN = env.JWT_EXPIRES_IN || '7d';
-const RESET_EXPIRES_MIN = Number(env.RESET_TOKEN_EXPIRES_MIN || 60);
-const VERIFICATION_EXPIRES_MIN = Number(env.VERIFICATION_TOKEN_EXPIRES_MIN || 1440);
-
-const DATA_FILE = path.join(__dirname, '..', 'data', 'users.json');
-
-function loadUsers() {
-  try {
-    const raw = fs.readFileSync(DATA_FILE, 'utf-8');
-    return JSON.parse(raw || '[]');
-  } catch (e) {
-    return [];
-  }
-}
-
-function saveUsers(users) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(users, null, 2), 'utf-8');
-}
-
-function findByEmail(email) {
-  const users = loadUsers();
-  return users.find((u) => u.email === email);
-}
 
 exports.register = async (req, res) => {
-  const { name, email, password, role } = req.body;
-  if (!name || !email || !password) return res.status(400).json({ message: 'Missing fields' });
-  if (findByEmail(email)) return res.status(400).json({ message: 'Email already exists' });
-  const hashed = await bcrypt.hash(password, 10);
-  const users = loadUsers();
-  const verificationToken = uuidv4();
-  const user = {
-    id: uuidv4(),
-    name,
-    email,
-    password: hashed,
-    role: role || 'customer',
-    emailVerified: false,
-    verificationToken,
-    verificationExpires: Date.now() + VERIFICATION_EXPIRES_MIN * 60 * 1000,
-    createdAt: new Date().toISOString(),
-  };
-  users.push(user);
-  saveUsers(users);
-  const token = jwt.sign({ sub: user.id, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
-  console.log(`Verify email link: http://localhost:${env.PORT || 5000}/auth/verify-email?token=${verificationToken}`);
-  res.json({
-    user: { id: user.id, name: user.name, email: user.email, role: user.role, emailVerified: user.emailVerified },
-    token,
-  });
+  try {
+    const { name, email, password, phone, pharmacyName, pharmacyLocation, licenseNumber, nationalId } = req.body;
+    if (!name || !email || !password || !phone || !pharmacyName || !pharmacyLocation || !licenseNumber || !nationalId) {
+      return res.status(400).json({
+        message: 'Missing required fields for pharmacist registration',
+      });
+    }
+    
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) return res.status(400).json({ message: 'Email already exists' });
+
+    const existingLicense = await prisma.user.findUnique({ where: { licenseNumber } });
+    if (existingLicense) return res.status(400).json({ message: 'License number already exists' });
+
+    const existingNationalId = await prisma.user.findUnique({ where: { nationalId } });
+    if (existingNationalId) return res.status(400).json({ message: 'National ID already exists' });
+    
+    const hashed = await bcrypt.hash(password, 10);
+
+    const user = await prisma.user.create({
+      data: {
+        name,
+        email,
+        password: hashed,
+        phone: phone || null,
+        role: 'PHARMACIST',
+        pharmacyName,
+        pharmacyLocation,
+        licenseNumber,
+        nationalId,
+        verificationStatus: 'PENDING',
+      }
+    });
+
+    res.status(201).json({
+      message: 'Pharmacist registration submitted for verification',
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role.toLowerCase(),
+        verificationStatus: user.verificationStatus.toLowerCase(),
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
 
 exports.login = async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ message: 'Missing credentials' });
-  const user = findByEmail(email);
-  if (!user) return res.status(401).json({ message: 'Invalid credentials' });
-  const ok = await bcrypt.compare(password, user.password);
-  if (!ok) return res.status(401).json({ message: 'Invalid credentials' });
-  const token = jwt.sign({ sub: user.id, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
-  res.json({
-    user: { id: user.id, name: user.name, email: user.email, role: user.role, emailVerified: !!user.emailVerified },
-    token,
-  });
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ message: 'Missing credentials' });
+    
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) return res.status(401).json({ message: 'Invalid credentials' });
+    
+    const ok = await bcrypt.compare(password, user.password);
+    if (!ok) return res.status(401).json({ message: 'Invalid credentials' });
+
+    if (user.role === 'PHARMACIST' && user.verificationStatus !== 'APPROVED') {
+      return res.status(403).json({ message: 'Pharmacist account is pending verification' });
+    }
+    
+    const token = jwt.sign({ sub: user.id, role: user.role.toLowerCase() }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    res.json({
+      user: { id: user.id, name: user.name, email: user.email, role: user.role.toLowerCase(), verificationStatus: user.verificationStatus.toLowerCase() },
+      token,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
 
-exports.me = (req, res) => {
-  const users = loadUsers();
-  const user = users.find((u) => u.id === req.user.id);
-  if (!user) return res.status(404).json({ message: 'User not found' });
-  res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role, emailVerified: !!user.emailVerified } });
+exports.me = async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role.toLowerCase() } });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
 
 exports.logout = (req, res) => {

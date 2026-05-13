@@ -1,34 +1,54 @@
-const fs = require('fs');
-const path = require('path');
-const { v4: uuidv4 } = require('uuid');
-
-const DATA_FILE = path.join(__dirname, '..', 'data', 'users.json');
-
-function loadUsers() {
-  try {
-    const raw = fs.readFileSync(DATA_FILE, 'utf-8');
-    return JSON.parse(raw || '[]');
-  } catch (e) {
-    return [];
-  }
-}
-
-function saveUsers(users) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(users, null, 2), 'utf-8');
-}
+const prisma = require('../config/prisma');
 
 // Dashboard - System Overview
-exports.getDashboard = (req, res) => {
-  const users = loadUsers();
-  const stats = {
-    totalUsers: users.length,
-    totalCustomers: users.filter((u) => u.role === 'customer').length,
-    totalPharmacists: users.filter((u) => u.role === 'pharmacist').length,
-    totalDeliveryStaff: users.filter((u) => u.role === 'delivery').length,
-    verifiedUsers: users.filter((u) => u.emailVerified).length,
-    unverifiedUsers: users.filter((u) => !u.emailVerified).length,
-  };
-  res.json({ stats, timestamp: new Date().toISOString() });
+exports.getDashboard = async (req, res) => {
+  try {
+    const usersCount = await prisma.user.count();
+    const customersCount = await prisma.user.count({ where: { role: 'CUSTOMER' } });
+    const pharmacistsCount = await prisma.user.count({ where: { role: 'PHARMACIST' } });
+    
+    // We don't have emailVerified in the schema right now, so we'll mock verified
+    const verifiedUsers = usersCount; 
+    const unverifiedUsers = 0;
+
+    const stats = {
+      totalUsers: usersCount,
+      totalCustomers: customersCount,
+      totalPharmacists: pharmacistsCount,
+      verifiedUsers,
+      unverifiedUsers,
+    };
+
+    // Grab recent orders
+    const recentOrders = await prisma.order.findMany({
+      take: 5,
+      orderBy: { createdAt: 'desc' },
+      include: { customer: true }
+    });
+
+    const recentUsersRecord = await prisma.user.findMany({
+      take: 5,
+      orderBy: { createdAt: 'desc' },
+      select: {
+         id: true,
+         name: true,
+         email: true,
+         role: true,
+         phone: true,
+         createdAt: true,
+      }
+    });
+
+    res.json({ 
+      stats, 
+      recentOrders,
+      recentUsers: recentUsersRecord,
+      timestamp: new Date().toISOString() 
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
 
 // Users Management
@@ -76,7 +96,7 @@ exports.updateUser = (req, res) => {
     }
     user.email = email;
   }
-  if (role && ['customer', 'pharmacist', 'delivery', 'admin'].includes(role)) {
+  if (role && ['customer', 'pharmacist', 'admin'].includes(role)) {
     user.role = role;
   }
   saveUsers(users);
@@ -130,20 +150,6 @@ exports.getPharmacists = (req, res) => {
   res.json({ pharmacists, total: pharmacists.length });
 };
 
-// Delivery Staff Management
-exports.getDeliveryStaff = (req, res) => {
-  const users = loadUsers();
-  const deliveryStaff = users
-    .filter((u) => u.role === 'delivery')
-    .map((u) => ({
-      id: u.id,
-      name: u.name,
-      email: u.email,
-      createdAt: u.createdAt,
-    }));
-  res.json({ deliveryStaff, total: deliveryStaff.length });
-};
-
 // Branch Management
 exports.getBranches = (req, res) => {
   const branches = [
@@ -171,7 +177,6 @@ exports.createBranch = (req, res) => {
 exports.getSystemConfig = (req, res) => {
   const config = {
     taxRate: 18,
-    deliveryCharge: 50,
     minimumOrderValue: 200,
     paymentMethods: ['card', 'upi', 'wallet'],
     currencySymbol: '₹',
@@ -182,10 +187,9 @@ exports.getSystemConfig = (req, res) => {
 };
 
 exports.updateSystemConfig = (req, res) => {
-  const { taxRate, deliveryCharge, minimumOrderValue, paymentMethods } = req.body;
+  const { taxRate, minimumOrderValue, paymentMethods } = req.body;
   const config = {
     taxRate: taxRate || 18,
-    deliveryCharge: deliveryCharge || 50,
     minimumOrderValue: minimumOrderValue || 200,
     paymentMethods: paymentMethods || ['card', 'upi', 'wallet'],
   };
@@ -209,11 +213,6 @@ exports.getReports = (req, res) => {
       topSelling: ['Aspirin', 'Crocin', 'Dolo 650'],
       lowStock: ['Medicine A', 'Medicine B'],
       outOfStock: ['Medicine C'],
-    },
-    delivery: {
-      onTimeDelivery: 98.5,
-      avgDeliveryTime: 2.3,
-      deliverySuccess: 99.2,
     },
   };
   res.json(reports);

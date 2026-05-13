@@ -9,5 +9,16 @@
     "verificationToken": "b5a98930-3021-4595-af18-c8e64c63a819",
     "verificationExpires": 1778700032769,
     "createdAt": "2026-05-12T19:20:32.769Z"
+  },
+  {
+    "id": "3c23006e-3103-4eb4-913e-350524c60a13",
+    "name": "Yohannes Birhane",
+    "email": "yohannesb1239@gmail.com",
+    "password": "$2a$10$bIKO6BJauX4BM2H6E0soBunfx/3PdVn.QMsEYEaVaGgjlF1ybTZWS",
+    "role": "admin",
+    "emailVerified": false,
+    "verificationToken": "5448c3e5-2c77-4248-a762-2514c78cbfb4",
+    "verificationExpires": 1778741394614,
+    "createdAt": "2026-05-13T06:49:54.614Z"
   }
 ]
