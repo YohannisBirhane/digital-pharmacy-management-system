@@ -1,1 +1,13 @@
-[]
+[
+  {
+    "id": "36bac976-1d3c-4e91-bcef-419ffe6d6a4b",
+    "name": "Yohannes Birhane",
+    "email": "yohannesb139@gmail.com",
+    "password": "$2a$10$E88fmNcOc8kYNKMoOm5kzOh7x91dWq0h7gkHxkgQ8F5MOE3eIm9be",
+    "role": "customer",
+    "emailVerified": false,
+    "verificationToken": "b5a98930-3021-4595-af18-c8e64c63a819",
+    "verificationExpires": 1778700032769,
+    "createdAt": "2026-05-12T19:20:32.769Z"
+  }
+]

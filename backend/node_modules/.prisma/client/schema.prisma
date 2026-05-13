@@ -1,0 +1,205 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql" // Or "mysql" depending on preference, postgresql is a good default
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// ENUMS
+// -----------------------------------------------------------------------------
+
+enum Role {
+  ADMIN
+  CUSTOMER
+  PHARMACIST
+  DELIVERY
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  SHIPPED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+  RETURNED
+}
+
+enum PrescriptionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CREDIT_CARD
+  MOBILE_MONEY
+  CASH_ON_DELIVERY
+  BANK_TRANSFER
+}
+
+// -----------------------------------------------------------------------------
+// MODELS
+// -----------------------------------------------------------------------------
+
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String
+  phone     String?
+  role      Role     @default(CUSTOMER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  orders        Order[]        @relation("CustomerOrders")
+  prescriptions Prescription[]
+  deliveries    Delivery[]     @relation("DeliveryAgent")
+  auditLogs     AuditLog[]
+  payments      Payment[]
+}
+
+model Branch {
+  id          String   @id @default(uuid())
+  name        String
+  address     String
+  phoneNumber String?
+  email       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  inventory Inventory[]
+}
+
+model Medicine {
+  id              String   @id @default(uuid())
+  name            String
+  description     String?
+  category        String?
+  manufacturer    String?
+  price           Float
+  prescriptionReq Boolean  @default(false)
+  barcode         String?  @unique
+  imageUrl        String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relationships
+  inventory  Inventory[]
+  orderItems OrderItem[]
+}
+
+model Inventory {
+  id          String    @id @default(uuid())
+  branchId    String
+  medicineId  String
+  quantity    Int       @default(0)
+  batchNumber String?
+  expiryDate  DateTime?
+  lastUpdated DateTime  @default(now())
+
+  // Relationships
+  branch   Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  medicine Medicine @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, medicineId, batchNumber]) // Unique per batch in a branch
+}
+
+model Prescription {
+  id         String             @id @default(uuid())
+  customerId String
+  imageUrl   String
+  status     PrescriptionStatus @default(PENDING)
+  notes      String? // Notes from the pharmacist
+  uploadedAt DateTime           @default(now())
+  reviewedAt DateTime?
+
+  // Relationships
+  customer User    @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  orders   Order[]
+}
+
+model Order {
+  id              String      @id @default(uuid())
+  customerId      String
+  prescriptionId  String?
+  status          OrderStatus @default(PENDING)
+  totalAmount     Float
+  shippingAddress String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relationships
+  customer     User          @relation("CustomerOrders", fields: [customerId], references: [id])
+  prescription Prescription? @relation(fields: [prescriptionId], references: [id])
+  items        OrderItem[]
+  payment      Payment?
+  delivery     Delivery?
+}
+
+model OrderItem {
+  id         String @id @default(uuid())
+  orderId    String
+  medicineId String
+  quantity   Int
+  price      Float // Price at the time of order
+
+  // Relationships
+  order    Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  medicine Medicine @relation(fields: [medicineId], references: [id])
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  orderId       String        @unique
+  customerId    String
+  amount        Float
+  method        PaymentMethod
+  status        PaymentStatus @default(PENDING)
+  transactionId String? // External transaction ID from payment gateway
+  paidAt        DateTime?
+  createdAt     DateTime      @default(now())
+
+  // Relationships
+  order    Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  customer User  @relation(fields: [customerId], references: [id])
+}
+
+model Delivery {
+  id              String      @id @default(uuid())
+  orderId         String      @unique
+  deliveryAgentId String?
+  trackingUrl     String?
+  status          OrderStatus @default(PENDING)
+  assignedAt      DateTime?
+  deliveredAt     DateTime?
+
+  // Relationships
+  order         Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  deliveryAgent User? @relation("DeliveryAgent", fields: [deliveryAgentId], references: [id])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String
+  entity    String // The entity being modified (e.g., 'User', 'Order', 'Medicine')
+  entityId  String? // ID of the entity that was affected
+  details   Json? // Store what was changed
+  createdAt DateTime @default(now())
+
+  // Relationships
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
