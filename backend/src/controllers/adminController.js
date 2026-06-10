@@ -60,6 +60,8 @@ const recordAuditLog = async ({ userId = null, action, entity, entityId = null, 
 };
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const DEFAULT_SYSTEM_CONFIG_ID = 'global';
+const DEFAULT_PAYMENT_METHODS = ['card', 'upi', 'wallet'];
 
 const startOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
@@ -114,6 +116,43 @@ const formatStockItem = (item) => {
   const medicineName = item.medicine?.name || 'Unknown medicine';
   const branchLabel = item.branch ? `${item.branch.name}${item.branch.city ? `, ${item.branch.city}` : ''}` : 'Unknown branch';
   return `${medicineName} @ ${branchLabel} (${item.quantity})`;
+};
+
+const serializeSystemConfig = (config) => ({
+  id: config.id,
+  taxRate: Number(config.taxRate) || 0,
+  minimumOrderValue: Number(config.minimumOrderValue) || 0,
+  paymentMethods: Array.isArray(config.paymentMethods) ? config.paymentMethods : DEFAULT_PAYMENT_METHODS,
+  currencySymbol: config.currencySymbol || '₹',
+  businessName: config.businessName || 'Phoenixopia Pharmacy',
+  businessEmail: config.businessEmail || 'support@phoenixopia.com',
+  createdAt: config.createdAt instanceof Date ? config.createdAt.toISOString() : config.createdAt,
+  updatedAt: config.updatedAt instanceof Date ? config.updatedAt.toISOString() : config.updatedAt,
+});
+
+const parseNumber = (value, fallback) => {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const resolveString = (value, fallback) => {
+  if (typeof value !== 'string' || value.trim() === '') return fallback;
+  return value;
+};
+
+const resolvePaymentMethods = (value, fallback = DEFAULT_PAYMENT_METHODS) => {
+  if (Array.isArray(value)) {
+    const sanitized = value.map((method) => String(method).trim()).filter(Boolean);
+    return sanitized.length ? sanitized : fallback;
+  }
+
+  if (typeof value === 'string') {
+    const sanitized = value.split(',').map((method) => method.trim()).filter(Boolean);
+    return sanitized.length ? sanitized : fallback;
+  }
+
+  return fallback;
 };
 
 const toPrismaRole = (role) => {
@@ -544,26 +583,64 @@ exports.deleteBranch = async (req, res) => {
 };
 
 // System Configuration
-exports.getSystemConfig = (req, res) => {
-  const config = {
-    taxRate: 18,
-    minimumOrderValue: 200,
-    paymentMethods: ['card', 'upi', 'wallet'],
-    currencySymbol: '₹',
-    businessName: 'Phoenixopia Pharmacy',
-    businessEmail: 'support@phoenixopia.com',
-  };
-  res.json(config);
+exports.getSystemConfig = async (req, res) => {
+  try {
+    const config = await prisma.systemConfig.upsert({
+      where: { id: DEFAULT_SYSTEM_CONFIG_ID },
+      update: {},
+      create: {
+        id: DEFAULT_SYSTEM_CONFIG_ID,
+        taxRate: 18,
+        minimumOrderValue: 200,
+        paymentMethods: DEFAULT_PAYMENT_METHODS,
+        currencySymbol: '₹',
+        businessName: 'Phoenixopia Pharmacy',
+        businessEmail: 'support@phoenixopia.com',
+      },
+    });
+
+    res.json(serializeSystemConfig(config));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
 
-exports.updateSystemConfig = (req, res) => {
-  const { taxRate, minimumOrderValue, paymentMethods } = req.body;
-  const config = {
-    taxRate: taxRate || 18,
-    minimumOrderValue: minimumOrderValue || 200,
-    paymentMethods: paymentMethods || ['card', 'upi', 'wallet'],
-  };
-  res.json({ ok: true, config });
+exports.updateSystemConfig = async (req, res) => {
+  try {
+    const existingConfig = await prisma.systemConfig.upsert({
+      where: { id: DEFAULT_SYSTEM_CONFIG_ID },
+      update: {},
+      create: {
+        id: DEFAULT_SYSTEM_CONFIG_ID,
+        taxRate: 18,
+        minimumOrderValue: 200,
+        paymentMethods: DEFAULT_PAYMENT_METHODS,
+        currencySymbol: '₹',
+        businessName: 'Phoenixopia Pharmacy',
+        businessEmail: 'support@phoenixopia.com',
+      },
+    });
+
+    const { taxRate, minimumOrderValue, paymentMethods, currencySymbol, businessName, businessEmail } = req.body;
+
+    const updatedConfig = await prisma.systemConfig.update({
+      where: { id: DEFAULT_SYSTEM_CONFIG_ID },
+      data: {
+        taxRate: parseNumber(taxRate, existingConfig.taxRate),
+        minimumOrderValue: parseNumber(minimumOrderValue, existingConfig.minimumOrderValue),
+        paymentMethods: resolvePaymentMethods(paymentMethods, Array.isArray(existingConfig.paymentMethods) ? existingConfig.paymentMethods : DEFAULT_PAYMENT_METHODS),
+        currencySymbol: resolveString(currencySymbol, existingConfig.currencySymbol),
+        businessName: resolveString(businessName, existingConfig.businessName),
+        businessEmail: resolveString(businessEmail, existingConfig.businessEmail),
+      },
+    });
+
+    res.json({ ok: true, config: serializeSystemConfig(updatedConfig) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
 
 // Reports
