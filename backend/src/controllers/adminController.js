@@ -59,6 +59,63 @@ const recordAuditLog = async ({ userId = null, action, entity, entityId = null, 
   }
 };
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+const startOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+const startOfMonth = (date) => new Date(date.getFullYear(), date.getMonth(), 1);
+
+const shiftMonths = (date, months) => new Date(date.getFullYear(), date.getMonth() - months, 1);
+
+const daysAgo = (date, days) => {
+  const result = new Date(date);
+  result.setDate(result.getDate() - days);
+  result.setHours(0, 0, 0, 0);
+  return result;
+};
+
+const roundToTwo = (value) => Math.round((Number(value) || 0) * 100) / 100;
+
+const sumOrderRevenue = (orders) => roundToTwo(orders.reduce((total, order) => total + (Number(order.totalAmount) || 0), 0));
+
+const buildTrendBuckets = (orders, windowStart, bucketCount = 6) => {
+  const buckets = Array.from({ length: bucketCount }, (_, index) => {
+    const bucketStart = new Date(windowStart);
+    bucketStart.setDate(bucketStart.getDate() + index * 7);
+    const bucketEnd = new Date(bucketStart);
+    bucketEnd.setDate(bucketEnd.getDate() + 7);
+
+    return {
+      bucketStart,
+      bucketEnd,
+      revenue: 0,
+      orders: 0,
+    };
+  });
+
+  for (const order of orders) {
+    const orderDate = new Date(order.createdAt);
+    const diffDays = Math.floor((orderDate.getTime() - windowStart.getTime()) / MS_PER_DAY);
+    if (diffDays < 0) continue;
+
+    const bucketIndex = Math.min(bucketCount - 1, Math.floor(diffDays / 7));
+    const bucket = buckets[bucketIndex];
+    bucket.revenue += Number(order.totalAmount) || 0;
+    bucket.orders += 1;
+  }
+
+  return buckets.map((bucket) => ({
+    revenue: roundToTwo(bucket.revenue),
+    orders: bucket.orders,
+  }));
+};
+
+const formatStockItem = (item) => {
+  const medicineName = item.medicine?.name || 'Unknown medicine';
+  const branchLabel = item.branch ? `${item.branch.name}${item.branch.city ? `, ${item.branch.city}` : ''}` : 'Unknown branch';
+  return `${medicineName} @ ${branchLabel} (${item.quantity})`;
+};
+
 const toPrismaRole = (role) => {
   const normalized = normalizeRole(role, '');
   if (!normalized) return null;
@@ -510,25 +567,171 @@ exports.updateSystemConfig = (req, res) => {
 };
 
 // Reports
-exports.getReports = (req, res) => {
-  const reports = {
-    sales: {
-      totalSales: 500000,
-      totalOrders: 1200,
-      avgOrderValue: 416.67,
-    },
-    users: {
-      newUsersThisMonth: 150,
-      totalActiveUsers: 3500,
-      churnRate: 5,
-    },
-    medicines: {
-      topSelling: ['Aspirin', 'Crocin', 'Dolo 650'],
-      lowStock: ['Medicine A', 'Medicine B'],
-      outOfStock: ['Medicine C'],
-    },
-  };
-  res.json(reports);
+exports.getReports = async (req, res) => {
+  try {
+    const now = new Date();
+    const thisMonthStart = startOfMonth(now);
+    const lastMonthStart = shiftMonths(now, 1);
+    const threeMonthsAgoStart = shiftMonths(now, 2);
+    const ninetyDaysAgo = daysAgo(now, 90);
+
+    const [
+      allOrders,
+      allUsers,
+      recentOrders,
+      recentPrescriptions,
+      orderItems,
+      lowStockInventory,
+      outOfStockInventory,
+      completedPayments,
+    ] = await Promise.all([
+      prisma.order.findMany({
+        select: {
+          totalAmount: true,
+          createdAt: true,
+        },
+      }),
+      prisma.user.findMany({
+        select: {
+          id: true,
+          createdAt: true,
+        },
+      }),
+      prisma.order.findMany({
+        where: {
+          createdAt: {
+            gte: ninetyDaysAgo,
+          },
+        },
+        select: {
+          customerId: true,
+        },
+      }),
+      prisma.prescription.findMany({
+        where: {
+          uploadedAt: {
+            gte: ninetyDaysAgo,
+          },
+        },
+        select: {
+          customerId: true,
+        },
+      }),
+      prisma.orderItem.findMany({
+        select: {
+          quantity: true,
+          price: true,
+          medicine: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      }),
+      prisma.inventory.findMany({
+        where: {
+          quantity: {
+            gt: 0,
+            lte: 10,
+          },
+        },
+        orderBy: [
+          { quantity: 'asc' },
+          { lastUpdated: 'desc' },
+        ],
+        take: 10,
+        select: {
+          quantity: true,
+          medicine: {
+            select: {
+              name: true,
+            },
+          },
+          branch: {
+            select: {
+              name: true,
+              city: true,
+            },
+          },
+        },
+      }),
+      prisma.inventory.findMany({
+        where: {
+          quantity: 0,
+        },
+        orderBy: { lastUpdated: 'desc' },
+        take: 10,
+        select: {
+          quantity: true,
+          medicine: {
+            select: {
+              name: true,
+            },
+          },
+          branch: {
+            select: {
+              name: true,
+              city: true,
+            },
+          },
+        },
+      }),
+      prisma.payment.aggregate({
+        where: {
+          status: 'COMPLETED',
+        },
+        _count: {
+          _all: true,
+        },
+      }),
+    ]);
+
+    const activeCustomerIds = new Set([
+      ...recentOrders.map((order) => order.customerId),
+      ...recentPrescriptions.map((prescription) => prescription.customerId),
+    ]);
+
+    const eligibleForChurn = allUsers.filter((user) => user.createdAt < ninetyDaysAgo);
+    const inactiveEligibleUsers = eligibleForChurn.filter((user) => !activeCustomerIds.has(user.id));
+
+    const topSellingMap = new Map();
+    for (const item of orderItems) {
+      const medicineName = item.medicine?.name || 'Unknown medicine';
+      const existing = topSellingMap.get(medicineName) || { quantity: 0, revenue: 0 };
+      existing.quantity += Number(item.quantity) || 0;
+      existing.revenue += (Number(item.quantity) || 0) * (Number(item.price) || 0);
+      topSellingMap.set(medicineName, existing);
+    }
+
+    const topSelling = [...topSellingMap.entries()]
+      .sort((left, right) => right[1].quantity - left[1].quantity || right[1].revenue - left[1].revenue)
+      .slice(0, 3)
+      .map(([name, stats]) => `${name} - ${stats.quantity} sold`);
+
+    const reports = {
+      sales: {
+        totalSales: sumOrderRevenue(allOrders),
+        totalOrders: allOrders.length,
+        avgOrderValue: allOrders.length ? roundToTwo(sumOrderRevenue(allOrders) / allOrders.length) : 0,
+        completedPayments: completedPayments._count._all,
+      },
+      users: {
+        newUsersThisMonth: allUsers.filter((user) => user.createdAt >= thisMonthStart).length,
+        totalActiveUsers: activeCustomerIds.size,
+        churnRate: eligibleForChurn.length ? roundToTwo((inactiveEligibleUsers.length / eligibleForChurn.length) * 100) : 0,
+      },
+      medicines: {
+        topSelling: topSelling.length ? topSelling : ['No sales data yet'],
+        lowStock: lowStockInventory.length ? lowStockInventory.map(formatStockItem) : ['No low stock items'],
+        outOfStock: outOfStockInventory.length ? outOfStockInventory.map(formatStockItem) : ['No out of stock items'],
+      },
+    };
+
+    res.json(reports);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
 
 // Audit Logs
@@ -564,22 +767,62 @@ exports.getAuditLogs = async (req, res) => {
 };
 
 // Analytics
-exports.getAnalytics = (req, res) => {
-  const analytics = {
-    lastMonth: {
-      revenue: 450000,
-      orders: 1100,
-      newUsers: 120,
-    },
-    last3Months: {
-      revenue: 1350000,
-      orders: 3200,
-      newUsers: 350,
-    },
-    trends: {
-      revenue: [100000, 120000, 130000, 100000, 110000, 115000],
-      orders: [700, 750, 800, 700, 750, 800],
-    },
-  };
-  res.json(analytics);
+exports.getAnalytics = async (req, res) => {
+  try {
+    const now = new Date();
+    const thisMonthStart = startOfMonth(now);
+    const lastMonthStart = shiftMonths(now, 1);
+    const threeMonthsAgoStart = shiftMonths(now, 2);
+    const trendWindowStart = daysAgo(now, 42);
+
+    const [ordersLastThreeMonths, usersLastThreeMonths] = await Promise.all([
+      prisma.order.findMany({
+        where: {
+          createdAt: {
+            gte: threeMonthsAgoStart,
+            lte: now,
+          },
+        },
+        select: {
+          totalAmount: true,
+          createdAt: true,
+        },
+      }),
+      prisma.user.findMany({
+        where: {
+          createdAt: {
+            gte: threeMonthsAgoStart,
+            lte: now,
+          },
+        },
+        select: {
+          createdAt: true,
+        },
+      }),
+    ]);
+
+    const ordersLastMonth = ordersLastThreeMonths.filter((order) => order.createdAt >= lastMonthStart && order.createdAt < thisMonthStart);
+    const ordersLastThreeMonthsTotal = sumOrderRevenue(ordersLastThreeMonths);
+    const ordersLastMonthTotal = sumOrderRevenue(ordersLastMonth);
+    const newUsersLastMonth = usersLastThreeMonths.filter((user) => user.createdAt >= lastMonthStart && user.createdAt < thisMonthStart).length;
+
+    const analytics = {
+      lastMonth: {
+        revenue: ordersLastMonthTotal,
+        orders: ordersLastMonth.length,
+        newUsers: newUsersLastMonth,
+      },
+      last3Months: {
+        revenue: ordersLastThreeMonthsTotal,
+        orders: ordersLastThreeMonths.length,
+        newUsers: usersLastThreeMonths.length,
+      },
+      trends: buildTrendBuckets(ordersLastThreeMonths, trendWindowStart),
+    };
+
+    res.json(analytics);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
