@@ -68,6 +68,10 @@ model User {
   licenseNumber     String?            @unique
   nationalId        String?            @unique
   verificationStatus VerificationStatus @default(PENDING)
+  verificationToken  String?            @unique
+  verificationExpires DateTime?
+  resetToken         String?            @unique
+  resetExpires       DateTime?
   verifiedAt        DateTime?
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
@@ -82,9 +86,11 @@ model User {
 model Branch {
   id          String   @id @default(uuid())
   name        String
+  city        String   @default("")
   address     String
   phoneNumber String?
   email       String?
+  status      String   @default("active")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

@@ -22,6 +22,8 @@ router.get('/pharmacists', verifyToken, isAdmin, adminController.getPharmacists)
 // Branch Management
 router.get('/branches', verifyToken, isAdmin, adminController.getBranches);
 router.post('/branches', verifyToken, isAdmin, adminController.createBranch);
+router.put('/branches/:branchId', verifyToken, isAdmin, adminController.updateBranch);
+router.delete('/branches/:branchId', verifyToken, isAdmin, adminController.deleteBranch);
 
 // System Configuration
 router.get('/config', verifyToken, isAdmin, adminController.getSystemConfig);

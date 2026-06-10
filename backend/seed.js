@@ -49,6 +49,32 @@ async function main() {
     console.log(`   Role: ${admin.role}`);
     console.log(`   ID: ${admin.id}`);
 
+    const branchCount = await prisma.branch.count();
+    if (branchCount === 0) {
+      console.log('➕ Seeding demo branches...');
+      await prisma.branch.createMany({
+        data: [
+          {
+            name: 'Main Branch',
+            city: 'Addis Ababa',
+            address: 'Bole Road, near Edna Mall',
+            phoneNumber: '+251911111111',
+            email: 'main@phoenixopia.com',
+            status: 'active',
+          },
+          {
+            name: 'West Branch',
+            city: 'Adama',
+            address: 'Kebele 03, Main Street',
+            phoneNumber: '+251922222222',
+            email: 'west@phoenixopia.com',
+            status: 'active',
+          },
+        ],
+      });
+      console.log('✅ Demo branches created successfully!');
+    }
+
   } catch (error) {
     console.error('❌ Error:', error.message);
     process.exit(1);

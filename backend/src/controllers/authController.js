@@ -1,5 +1,3 @@
-const fs = require('fs');
-const path = require('path');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
@@ -8,6 +6,26 @@ const prisma = require('../config/prisma');
 const env = process.env;
 const JWT_SECRET = env.JWT_SECRET || 'change_this_secret';
 const JWT_EXPIRES_IN = env.JWT_EXPIRES_IN || '7d';
+const FRONTEND_URL = env.FRONTEND_URL || 'http://localhost:3000';
+const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000;
+const EMAIL_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
+
+const normalizeEnum = (value, fallback = null) => {
+  if (typeof value !== 'string' || value.trim() === '') return fallback;
+  return value.toLowerCase();
+};
+
+const serializeUser = (user) => ({
+  id: user.id,
+  name: user.name,
+  email: user.email,
+  role: normalizeEnum(user.role, 'customer'),
+  verificationStatus: normalizeEnum(
+    user.verificationStatus,
+    normalizeEnum(user.role, 'customer') === 'pharmacist' ? 'pending' : 'approved'
+  ),
+  emailVerified: Boolean(user.verifiedAt),
+});
 
 exports.register = async (req, res) => {
   try {
@@ -28,6 +46,8 @@ exports.register = async (req, res) => {
     if (existingNationalId) return res.status(400).json({ message: 'National ID already exists' });
     
     const hashed = await bcrypt.hash(password, 10);
+    const verificationToken = uuidv4();
+    const verificationExpires = new Date(Date.now() + EMAIL_VERIFICATION_TTL_MS);
 
     const user = await prisma.user.create({
       data: {
@@ -36,23 +56,21 @@ exports.register = async (req, res) => {
         password: hashed,
         phone: phone || null,
         role: 'PHARMACIST',
+        verificationStatus: 'PENDING',
         pharmacyName,
         pharmacyLocation,
         licenseNumber,
         nationalId,
-        verificationStatus: 'PENDING',
+        verificationToken,
+        verificationExpires,
       }
     });
 
+    console.log(`Pharmacist verification token for ${email}: ${verificationToken}`);
+
     res.status(201).json({
       message: 'Pharmacist registration submitted for verification',
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role.toLowerCase(),
-        verificationStatus: user.verificationStatus.toLowerCase(),
-      },
+      user: serializeUser(user),
     });
   } catch (error) {
     console.error(error);
@@ -64,20 +82,21 @@ exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ message: 'Missing credentials' });
-    
+
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) return res.status(401).json({ message: 'Invalid credentials' });
-    
+
     const ok = await bcrypt.compare(password, user.password);
     if (!ok) return res.status(401).json({ message: 'Invalid credentials' });
 
-    if (user.role === 'PHARMACIST' && user.verificationStatus !== 'APPROVED') {
+    if (normalizeEnum(user.role) === 'pharmacist' && normalizeEnum(user.verificationStatus, 'pending') !== 'approved') {
       return res.status(403).json({ message: 'Pharmacist account is pending verification' });
     }
-    
-    const token = jwt.sign({ sub: user.id, role: user.role.toLowerCase() }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+
+    const serializedUser = serializeUser(user);
+    const token = jwt.sign({ sub: user.id, role: serializedUser.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
     res.json({
-      user: { id: user.id, name: user.name, email: user.email, role: user.role.toLowerCase(), verificationStatus: user.verificationStatus.toLowerCase() },
+      user: serializedUser,
       token,
     });
   } catch (error) {
@@ -90,7 +109,7 @@ exports.me = async (req, res) => {
   try {
     const user = await prisma.user.findUnique({ where: { id: req.user.id } });
     if (!user) return res.status(404).json({ message: 'User not found' });
-    res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role.toLowerCase() } });
+    res.json({ user: serializeUser(user) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });
@@ -102,71 +121,134 @@ exports.logout = (req, res) => {
   res.json({ ok: true });
 };
 
-exports.requestPasswordReset = (req, res) => {
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ message: 'Missing email' });
-  const users = loadUsers();
-  const user = users.find((u) => u.email === email);
-  if (!user) return res.json({ ok: true });
-  const token = uuidv4();
-  user.resetToken = token;
-  user.resetExpires = Date.now() + RESET_EXPIRES_MIN * 60 * 1000;
-  saveUsers(users);
-  // For demo: print reset link to console (in real app email it)
-  console.log(`Password reset link: http://localhost:${env.PORT || 5000}/auth/reset?token=${token}`);
-  res.json({ ok: true });
+exports.requestPasswordReset = async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ message: 'Missing email' });
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) return res.json({ ok: true });
+
+    const token = uuidv4();
+    const resetExpires = new Date(Date.now() + PASSWORD_RESET_TTL_MS);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        resetToken: token,
+        resetExpires,
+      },
+    });
+
+    console.log(`Password reset link: ${FRONTEND_URL}/reset-password?token=${token}`);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
 
 exports.resetPassword = async (req, res) => {
-  const { token, password } = req.body;
-  if (!token || !password) return res.status(400).json({ message: 'Missing token or password' });
-  const users = loadUsers();
-  const user = users.find((u) => u.resetToken === token && u.resetExpires && u.resetExpires > Date.now());
-  if (!user) return res.status(400).json({ message: 'Invalid or expired token' });
-  user.password = await bcrypt.hash(password, 10);
-  delete user.resetToken;
-  delete user.resetExpires;
-  saveUsers(users);
-  res.json({ ok: true });
+  try {
+    const { token, password } = req.body;
+    if (!token || !password) return res.status(400).json({ message: 'Missing token or password' });
+
+    const user = await prisma.user.findUnique({ where: { resetToken: token } });
+    if (!user || !user.resetExpires || user.resetExpires <= new Date()) {
+      return res.status(400).json({ message: 'Invalid or expired token' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        password: hashedPassword,
+        resetToken: null,
+        resetExpires: null,
+      },
+    });
+
+    res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
 
 exports.changePassword = async (req, res) => {
-  const { currentPassword, newPassword } = req.body;
-  if (!currentPassword || !newPassword) return res.status(400).json({ message: 'Missing currentPassword or newPassword' });
-  const users = loadUsers();
-  const user = users.find((u) => u.id === req.user.id);
-  if (!user) return res.status(404).json({ message: 'User not found' });
-  const ok = await bcrypt.compare(currentPassword, user.password);
-  if (!ok) return res.status(401).json({ message: 'Invalid current password' });
-  user.password = await bcrypt.hash(newPassword, 10);
-  saveUsers(users);
-  res.json({ ok: true });
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) return res.status(400).json({ message: 'Missing currentPassword or newPassword' });
+
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const ok = await bcrypt.compare(currentPassword, user.password);
+    if (!ok) return res.status(401).json({ message: 'Invalid current password' });
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { password: hashedPassword },
+    });
+
+    res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
 
-exports.verifyEmail = (req, res) => {
-  const token = req.body.token || req.query.token;
-  if (!token) return res.status(400).json({ message: 'Missing token' });
-  const users = loadUsers();
-  const user = users.find((u) => u.verificationToken === token && u.verificationExpires && u.verificationExpires > Date.now());
-  if (!user) return res.status(400).json({ message: 'Invalid or expired token' });
-  user.emailVerified = true;
-  delete user.verificationToken;
-  delete user.verificationExpires;
-  saveUsers(users);
-  res.json({ ok: true });
+exports.verifyEmail = async (req, res) => {
+  try {
+    const token = req.body.token || req.query.token;
+    if (!token) return res.status(400).json({ message: 'Missing token' });
+
+    const user = await prisma.user.findUnique({ where: { verificationToken: token } });
+    if (!user || !user.verificationExpires || user.verificationExpires <= new Date()) {
+      return res.status(400).json({ message: 'Invalid or expired token' });
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        verifiedAt: new Date(),
+        verificationToken: null,
+        verificationExpires: null,
+      },
+    });
+
+    res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
 
-exports.resendVerification = (req, res) => {
-  const email = req.body.email || req.user?.email;
-  if (!email) return res.status(400).json({ message: 'Missing email' });
-  const users = loadUsers();
-  const user = users.find((u) => u.email === email);
-  if (!user) return res.json({ ok: true });
-  if (user.emailVerified) return res.json({ ok: true });
-  const token = uuidv4();
-  user.verificationToken = token;
-  user.verificationExpires = Date.now() + VERIFICATION_EXPIRES_MIN * 60 * 1000;
-  saveUsers(users);
-  console.log(`Verify email link: http://localhost:${env.PORT || 5000}/auth/verify-email?token=${token}`);
-  res.json({ ok: true });
+exports.resendVerification = async (req, res) => {
+  try {
+    const email = req.body.email || req.user?.email;
+    if (!email) return res.status(400).json({ message: 'Missing email' });
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) return res.json({ ok: true });
+    if (user.verifiedAt) return res.json({ ok: true });
+
+    const token = uuidv4();
+    const verificationExpires = new Date(Date.now() + EMAIL_VERIFICATION_TTL_MS);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        verificationToken: token,
+        verificationExpires,
+      },
+    });
+
+    console.log(`Verify email token for ${email}: ${token}`);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
