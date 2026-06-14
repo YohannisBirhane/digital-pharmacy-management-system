@@ -10,6 +10,7 @@ const medicinesRoutes = require('./modules/medicines/medicinesRoutes');
 const ordersRoutes = require('./modules/orders/ordersRoutes');
 const paymentsRoutes = require('./modules/payments/paymentsRoutes');
 const prescriptionsRoutes = require('./modules/prescriptions/prescriptionsRoutes');
+const customerRoutes = require('./modules/customer/customerRoutes');
 
 const app = express();
 app.use(cors());
@@ -18,6 +19,7 @@ app.use(express.json());
 // Mount modular routes
 app.use('/auth', authRoutes);
 app.use('/admin', adminRoutes);
+app.use('/customer', customerRoutes);
 app.use('/inventory', inventoryRoutes);
 app.use('/medicines', medicinesRoutes);
 app.use('/orders', ordersRoutes);
