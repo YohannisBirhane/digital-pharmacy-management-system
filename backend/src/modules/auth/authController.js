@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
-const prisma = require('../config/prisma');
+const prisma = require('../../config/prisma');
 
 const env = process.env;
 const JWT_SECRET = env.JWT_SECRET || 'change_this_secret';
@@ -45,7 +45,7 @@ exports.register = async (req, res) => {
     const existingNationalId = await prisma.user.findUnique({ where: { nationalId } });
     if (existingNationalId) return res.status(400).json({ message: 'National ID already exists' });
     
-    const hashed = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(password, 10);
     const verificationToken = uuidv4();
     const verificationExpires = new Date(Date.now() + EMAIL_VERIFICATION_TTL_MS);
 
@@ -53,7 +53,7 @@ exports.register = async (req, res) => {
       data: {
         name,
         email,
-        password: hashed,
+        password: hashedPassword,
         phone: phone || null,
         role: 'PHARMACIST',
         verificationStatus: 'PENDING',
@@ -78,6 +78,44 @@ exports.register = async (req, res) => {
   }
 };
 
+// Customer self-registration
+exports.registerCustomer = async (req, res) => {
+  try {
+    const { name, email, password, phone } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({ message: 'name, email and password are required' });
+    }
+
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) return res.status(400).json({ message: 'Email already exists' });
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({
+      data: {
+        name,
+        email,
+        password: hashedPassword,
+        phone: phone || null,
+        role: 'CUSTOMER',
+        verificationStatus: 'APPROVED', // customers are approved immediately
+      },
+    });
+
+    const serializedUser = serializeUser(user);
+    const token = jwt.sign({ sub: user.id, role: serializedUser.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+
+    res.status(201).json({
+      message: 'Customer account created successfully',
+      user: serializedUser,
+      token,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
+
+// Log-in
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -119,6 +157,30 @@ exports.me = async (req, res) => {
 exports.logout = (req, res) => {
   // stateless JWT - client should drop token
   res.json({ ok: true });
+};
+
+// Update own profile (any authenticated user)
+exports.updateProfile = async (req, res) => {
+  try {
+    const { name, phone } = req.body;
+    const data = {};
+    if (name && typeof name === 'string' && name.trim()) data.name = name.trim();
+    if (phone !== undefined) data.phone = phone || null;
+
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ message: 'Nothing to update. Provide name or phone.' });
+    }
+
+    const user = await prisma.user.update({
+      where: { id: req.user.id },
+      data,
+    });
+
+    res.json({ ok: true, user: serializeUser(user) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
 };
 
 exports.requestPasswordReset = async (req, res) => {

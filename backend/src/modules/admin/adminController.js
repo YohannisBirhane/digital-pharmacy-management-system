@@ -1,5 +1,5 @@
 const bcrypt = require('bcryptjs');
-const prisma = require('../config/prisma');
+const prisma = require('../../config/prisma');
 
 const normalizeRole = (role, fallback = 'customer') => {
   if (typeof role !== 'string' || role.trim() === '') return fallback;

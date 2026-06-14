@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const adminController = require('../controllers/adminController');
-const { verifyToken, requireRole } = require('../middleware/authMiddleware');
+const adminController = require('./adminController');
+const { verifyToken, requireRole } = require('../../middleware/authMiddleware');
 
 // Admin middleware check
 const isAdmin = requireRole('admin');
