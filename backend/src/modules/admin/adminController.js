@@ -124,8 +124,8 @@ const serializeSystemConfig = (config) => ({
   minimumOrderValue: Number(config.minimumOrderValue) || 0,
   paymentMethods: Array.isArray(config.paymentMethods) ? config.paymentMethods : DEFAULT_PAYMENT_METHODS,
   currencySymbol: config.currencySymbol || '₹',
-  businessName: config.businessName || 'Phoenixopia Pharmacy',
-  businessEmail: config.businessEmail || 'support@phoenixopia.com',
+  businessName: config.businessName || 'Hanora Pharmacy',
+  businessEmail: config.businessEmail || 'support@hanora.com',
   createdAt: config.createdAt instanceof Date ? config.createdAt.toISOString() : config.createdAt,
   updatedAt: config.updatedAt instanceof Date ? config.updatedAt.toISOString() : config.updatedAt,
 });
@@ -594,8 +594,8 @@ exports.getSystemConfig = async (req, res) => {
         minimumOrderValue: 200,
         paymentMethods: DEFAULT_PAYMENT_METHODS,
         currencySymbol: '₹',
-        businessName: 'Phoenixopia Pharmacy',
-        businessEmail: 'support@phoenixopia.com',
+        businessName: 'Hanora Pharmacy',
+        businessEmail: 'support@hanora.com',
       },
     });
 
@@ -617,8 +617,8 @@ exports.updateSystemConfig = async (req, res) => {
         minimumOrderValue: 200,
         paymentMethods: DEFAULT_PAYMENT_METHODS,
         currencySymbol: '₹',
-        businessName: 'Phoenixopia Pharmacy',
-        businessEmail: 'support@phoenixopia.com',
+        businessName: 'Hanora Pharmacy',
+        businessEmail: 'support@hanora.com',
       },
     });
 

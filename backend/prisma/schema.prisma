@@ -210,8 +210,8 @@ model SystemConfig {
   minimumOrderValue  Float    @default(200)
   paymentMethods     Json
   currencySymbol     String   @default("₹")
-  businessName       String   @default("Phoenixopia Pharmacy")
-  businessEmail      String   @default("support@phoenixopia.com")
+  businessName       String   @default("Hanora Pharmacy")
+  businessEmail      String   @default("support@hanora.com")
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 }

@@ -59,7 +59,7 @@ async function main() {
             city: 'Addis Ababa',
             address: 'Bole Road, near Edna Mall',
             phoneNumber: '+251911111111',
-            email: 'main@phoenixopia.com',
+            email: 'main@hanora.com',
             status: 'active',
           },
           {
@@ -67,7 +67,7 @@ async function main() {
             city: 'Adama',
             address: 'Kebele 03, Main Street',
             phoneNumber: '+251922222222',
-            email: 'west@phoenixopia.com',
+            email: 'west@hanora.com',
             status: 'active',
           },
         ],

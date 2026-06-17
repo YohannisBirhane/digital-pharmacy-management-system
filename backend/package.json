@@ -9,7 +9,7 @@
     "dev": "nodemon src/index.js",
     "postinstall": "prisma generate"
   },
-  "author": "Phoenixopia Solution",
+  "author": "Hanora Solution",
   "license": "MIT",
   "dependencies": {
     "@prisma/client": "^5.22.0",

@@ -5,8 +5,8 @@ CREATE TABLE "SystemConfig" (
     "minimumOrderValue" DOUBLE PRECISION NOT NULL DEFAULT 200,
     "paymentMethods" JSONB NOT NULL,
     "currencySymbol" TEXT NOT NULL DEFAULT '₹',
-    "businessName" TEXT NOT NULL DEFAULT 'Phoenixopia Pharmacy',
-    "businessEmail" TEXT NOT NULL DEFAULT 'support@phoenixopia.com',
+    "businessName" TEXT NOT NULL DEFAULT 'Hanora Pharmacy',
+    "businessEmail" TEXT NOT NULL DEFAULT 'support@hanora.com',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
